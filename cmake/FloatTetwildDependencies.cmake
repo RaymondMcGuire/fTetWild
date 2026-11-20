@@ -64,6 +64,7 @@ endif()
 
 # libigl
 if(NOT TARGET igl::core)
+    find_package(Eigen3 3.4.0 EXACT CONFIG QUIET)
     FetchContent_Declare(
         libigl
         GIT_REPOSITORY https://github.com/libigl/libigl.git
@@ -109,6 +110,9 @@ if(NOT TARGET geogram::geogram)
     set(GEOGRAM_WITH_TRIANGLE OFF CACHE BOOL "Disable triangle" FORCE)
 
     FetchContent_MakeAvailable(geogram)
+    if(MSVC_VERSION GREATER_EQUAL 1951)
+        target_include_directories(geogram_third_party PRIVATE "${CMAKE_CURRENT_LIST_DIR}/msvc-compat")
+    endif()
     include(geogram)
 endif()
 

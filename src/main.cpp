@@ -42,6 +42,7 @@
 #include <geogram/basic/logger.h>
 #include <geogram/mesh/mesh.h>
 #include <bitset>
+#include <stdexcept>
 
 using namespace floatTetWild;
 //using namespace Eigen;
@@ -479,7 +480,13 @@ int main(int argc, char** argv)
     stats().record(StateInfo::init_id, 0, input_vertices.size(), input_faces.size(), -1, -1);
 
     timer.start();
-    simplify(input_vertices, input_faces, input_tags, tree, params, skip_simplify);
+    try {
+        simplify(input_vertices, input_faces, input_tags, tree, params, skip_simplify);
+    }
+    catch (const std::runtime_error& error) {
+        std::cerr << "Surface simplification failed: " << error.what() << std::endl;
+        return EXIT_FAILURE;
+    }
     tree.init_b_mesh_and_tree(input_vertices, input_faces, mesh);
     logger().info("preprocessing {}s", timer.getElapsedTimeInSec());
     logger().info("");
@@ -636,14 +643,14 @@ int main(int argc, char** argv)
     }
     // fortest
     MeshIO::write_mesh(output_mesh_name, mesh, false, colors, !nobinary, !csg_file.empty());
-    igl::write_triangle_mesh(params.output_path + "_" + params.postfix + "_sf.obj", V_sf, F_sf);
-    //    MeshIO::write_surface_mesh(params.output_path + "_" + params.postfix + "_sf.obj", mesh,
-    //    false);
+    if (params.log_level < 3)
+        igl::write_triangle_mesh(params.output_path + "_" + params.postfix + "_sf.obj", V_sf, F_sf);
 
-    std::ofstream fout(params.log_path + "_" + params.postfix + ".csv");
-    if (fout.good())
-        fout << stats();
-    fout.close();
+    if (params.log_level < 3 || command_line.count("--log") > 0) {
+        std::ofstream fout(params.log_path + "_" + params.postfix + ".csv");
+        if (fout.good())
+            fout << stats();
+    }
 
     if (!params.envelope_log.empty()) {
         std::ofstream fout(params.envelope_log);

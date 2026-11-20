@@ -14,6 +14,7 @@
 #include <igl/remove_duplicate_vertices.h>
 #include <igl/unique_rows.h>
 #include <igl/writeOFF.h>
+#include <stdexcept>
 
 #ifdef FLOAT_TETWILD_USE_TBB
 #include <oneapi/tbb/concurrent_unordered_set.h>
@@ -33,8 +34,9 @@ void floatTetWild::simplify(std::vector<Vector3>&  input_vertices,
     if (skip_simplify)
         return;
 
-    std::vector<bool>                    v_is_removed(input_vertices.size(), false);
-    std::vector<bool>                    f_is_removed(input_faces.size(), false);
+    // Edge collapses in the same TBB batch must write to separate bytes.
+    std::vector<char>                    v_is_removed(input_vertices.size(), false);
+    std::vector<char>                    f_is_removed(input_faces.size(), false);
     std::vector<std::unordered_set<int>> conn_fs(input_vertices.size());
     for (int i = 0; i < input_faces.size(); i++) {
         for (int j = 0; j < 3; j++)
@@ -50,28 +52,31 @@ void floatTetWild::simplify(std::vector<Vector3>&  input_vertices,
     swapping(input_vertices, input_faces, tree, params, v_is_removed, f_is_removed, conn_fs);
     std::cout << "swapping " << timer.getElapsedTime() << std::endl;
 
-    // clean up vs, fs
-    // v
+    // Compact vertices referenced by surviving faces, in the original vertex order.
     std::vector<int> map_v_ids(input_vertices.size(), -1);
-    int              cnt = 0;
-    for (int i = 0; i < input_vertices.size(); i++) {
-        if (v_is_removed[i] || conn_fs[i].empty())
+    for (int i = 0; i < input_faces.size(); i++) {
+        if (f_is_removed[i])
             continue;
-        map_v_ids[i] = cnt;
-        cnt++;
+        for (int j = 0; j < 3; j++) {
+            const int v_id = input_faces[i][j];
+            if (v_id < 0 || static_cast<size_t>(v_id) >= input_vertices.size() || v_is_removed[v_id])
+                throw std::runtime_error("Surviving surface face references an invalid vertex");
+            map_v_ids[v_id] = 0;
+        }
     }
 
-    std::vector<Vector3> new_input_vertices(cnt);
-    cnt = 0;
+    std::vector<Vector3> new_input_vertices;
+    new_input_vertices.reserve(input_vertices.size());
     for (int i = 0; i < input_vertices.size(); i++) {
-        if (v_is_removed[i] || conn_fs[i].empty())
+        if (map_v_ids[i] < 0)
             continue;
-        new_input_vertices[cnt++] = input_vertices[i];
+        map_v_ids[i] = static_cast<int>(new_input_vertices.size());
+        new_input_vertices.push_back(input_vertices[i]);
     }
-    input_vertices = new_input_vertices;
+    input_vertices.swap(new_input_vertices);
 
     // f
-    cnt = 0;
+    int cnt = 0;
     for (int i = 0; i < input_faces.size(); i++) {
         if (f_is_removed[i])
             continue;
@@ -225,8 +230,8 @@ void floatTetWild::collapsing(std::vector<Vector3>&                 input_vertic
                               std::vector<Vector3i>&                input_faces,
                               const AABBWrapper&                    tree,
                               const Parameters&                     params,
-                              std::vector<bool>&                    v_is_removed,
-                              std::vector<bool>&                    f_is_removed,
+                              std::vector<char>&                    v_is_removed,
+                              std::vector<char>&                    f_is_removed,
                               std::vector<std::unordered_set<int>>& conn_fs)
 {
 #ifdef FLOAT_TETWILD_USE_TBB
@@ -517,8 +522,8 @@ void floatTetWild::swapping(std::vector<Vector3>&                 input_vertices
                             std::vector<Vector3i>&                input_faces,
                             const AABBWrapper&                    tree,
                             const Parameters&                     params,
-                            std::vector<bool>&                    v_is_removed,
-                            std::vector<bool>&                    f_is_removed,
+                            std::vector<char>&                    v_is_removed,
+                            std::vector<char>&                    f_is_removed,
                             std::vector<std::unordered_set<int>>& conn_fs)
 {
     std::vector<std::array<int, 2>> edges;
@@ -564,6 +569,8 @@ void floatTetWild::swapping(std::vector<Vector3>&                 input_vertices
                 input_faces[n12_f_ids[1]][j] != v2_id)
                 n_v_ids[1] = input_faces[n12_f_ids[1]][j];
         }
+        if (n_v_ids[0] < 0 || n_v_ids[1] < 0 || n_v_ids[0] == n_v_ids[1])
+            continue;
 
         // check coplanar
         Scalar cos_a0 =
@@ -977,7 +984,7 @@ bool floatTetWild::is_out_envelope(const std::array<Vector3, 3>& vs,
 
 void floatTetWild::check_surface(std::vector<Vector3>&    input_vertices,
                                  std::vector<Vector3i>&   input_faces,
-                                 const std::vector<bool>& f_is_removed,
+                                 const std::vector<char>& f_is_removed,
                                  const AABBWrapper&       tree,
                                  const Parameters&        params)
 {

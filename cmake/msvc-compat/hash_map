@@ -1,0 +1,9 @@
+#pragma once
+
+#include <unordered_map>
+
+// shortcut: Geogram 1.9.6 still includes hash_map, remove after upgrading to Geogram 1.10.
+namespace stdext {
+    template<class Key, class Value>
+    using hash_map = std::unordered_map<Key, Value>;
+}
